@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import numpy as np
 
 # Set konfigurasi halaman
 st.set_page_config(
@@ -27,7 +28,10 @@ def load_data():
     combined_df['weathersit_name'] = combined_df['weathersit'].map(weathersit_map)
     combined_df['weekday_name'] = combined_df['weekday'].map(weekday_map)
     
-    # Membuat day_df dengan menggabungkan combined_df berdasarkan tanggal
+    # Menambahkan kolom weekend/weekday seperti di notebook
+    combined_df['is_weekend'] = combined_df['weekday'].apply(lambda x: 'Weekend' if x in [0, 6] else 'Weekday')
+    
+    # Membuat agregasi per hari untuk analisis tingkat hari
     day_df = combined_df.groupby('dteday').agg({
         'season': 'first',
         'yr': 'first',
@@ -40,12 +44,13 @@ def load_data():
         'atemp': 'mean',
         'hum': 'mean',
         'windspeed': 'mean',
-        'cnt': 'sum',
         'casual': 'sum',
         'registered': 'sum',
+        'cnt': 'sum',
         'season_name': 'first',
         'weathersit_name': 'first',
-        'weekday_name': 'first'
+        'weekday_name': 'first',
+        'is_weekend': 'first'
     }).reset_index()
     
     return combined_df, day_df
@@ -78,40 +83,20 @@ end_date = pd.Timestamp(end_date)
 
 # Filter dataframe berdasarkan tanggal
 filtered_combined_df = combined_df[(combined_df['dteday'] >= start_date) & (combined_df['dteday'] <= end_date)]
-
-# Filter dan regenerasi day_df berdasarkan data gabungan yang difilter
-filtered_day_df = filtered_combined_df.groupby('dteday').agg({
-    'season': 'first',
-    'yr': 'first',
-    'mnth': 'first',
-    'holiday': 'first',
-    'weekday': 'first',
-    'workingday': 'first',
-    'weathersit': 'first',
-    'temp': 'mean',
-    'atemp': 'mean',
-    'hum': 'mean',
-    'windspeed': 'mean',
-    'cnt': 'sum',
-    'casual': 'sum',
-    'registered': 'sum',
-    'season_name': 'first',
-    'weathersit_name': 'first',
-    'weekday_name': 'first'
-}).reset_index()
+filtered_day_df = day_df[(day_df['dteday'] >= start_date) & (day_df['dteday'] <= end_date)]
 
 # Filter musim
 selected_seasons = st.sidebar.multiselect(
     "Pilih musim",
-    options=combined_df['season_name'].unique(),
-    default=combined_df['season_name'].unique()
+    options=day_df['season_name'].unique(),
+    default=day_df['season_name'].unique()
 )
 
 # Filter cuaca
 selected_weather = st.sidebar.multiselect(
     "Pilih kondisi cuaca",
-    options=combined_df['weathersit_name'].unique(),
-    default=combined_df['weathersit_name'].unique()
+    options=day_df['weathersit_name'].unique(),
+    default=day_df['weathersit_name'].unique()
 )
 
 # Menerapkan filter
@@ -137,68 +122,79 @@ col2.metric("Rata-rata Penyewaan Harian", f"{avg_daily_rentals:.2f}")
 col3.metric("Penyewaan Harian Maksimum", f"{max_daily_rentals:,}")
 col4.metric("Jumlah Hari Dianalisis", f"{total_days}")
 
-# Membuat tab untuk analisis berbeda
-tab1, tab2, tab3 = st.tabs(["Analisis Musiman", "Pola Harian", "Dampak Cuaca"])
+# Membuat tab untuk analisis sesuai pertanyaan bisnis
+tab1, tab2, tab3 = st.tabs(["Pertanyaan 1", "Pertanyaan 2", "Analisis Lanjutan"])
 
 with tab1:
-    st.header("Pola Penyewaan Sepeda Berdasarkan Musim")
+    # st.header("1. Bagaimana kondisi musim dan cuaca mempengaruhi permintaan penyewaan sepeda?")
     
-    # Penyewaan berdasarkan musim
-    seasonal_rentals = filtered_day_df.groupby('season_name')['cnt'].mean().reset_index()
+    # Kolom untuk dua visualisasi
+    col1, col2 = st.columns(2)
     
-    fig = px.bar(
-        seasonal_rentals, 
-        x='season_name', 
-        y='cnt',
-        color='season_name',
-        labels={'cnt': 'Rata-rata Penyewaan', 'season_name': 'Musim'},
-        title='Rata-rata Penyewaan Sepeda Berdasarkan Musim'
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    with col1:
+        # Analysis of seasonal impact - persis seperti di notebook
+        seasonal_rentals = filtered_day_df.groupby('season_name')['cnt'].agg(['mean', 'sum']).reset_index()
+        seasonal_rentals = seasonal_rentals.sort_values('sum', ascending=False)
+        
+        fig = px.bar(
+            seasonal_rentals, 
+            x='season_name', 
+            y='mean',
+            color='season_name',
+            labels={'mean': 'Rata-rata Penyewaan', 'season_name': 'Musim'},
+            title='Rata-rata Penyewaan Sepeda Harian berdasarkan Musim',
+            category_orders={"season_name": seasonal_rentals['season_name'].tolist()}
+        )
+        st.plotly_chart(fig, use_container_width=True)
     
-    # Tren bulanan
-    filtered_day_df['month'] = filtered_day_df['dteday'].dt.month
-    filtered_day_df['month_name'] = filtered_day_df['dteday'].dt.strftime('%B')
+    with col2:
+        # Analysis of weather impact - persis seperti di notebook
+        weather_rentals = filtered_day_df.groupby('weathersit_name')['cnt'].agg(['mean', 'sum', 'count']).reset_index()
+        weather_rentals = weather_rentals.sort_values('mean', ascending=False)
+        
+        fig = px.bar(
+            weather_rentals, 
+            x='weathersit_name', 
+            y='mean',
+            color='weathersit_name',
+            labels={'mean': 'Rata-rata Penyewaan', 'weathersit_name': 'Kondisi Cuaca'},
+            title='Rata-rata Penyewaan Sepeda Harian berdasarkan Kondisi Cuaca',
+            category_orders={"weathersit_name": weather_rentals['weathersit_name'].tolist()}
+        )
+        st.plotly_chart(fig, use_container_width=True)
     
-    # Terjemahkan nama bulan ke Bahasa Indonesia
-    month_map = {
-        'January': 'Januari', 
-        'February': 'Februari', 
-        'March': 'Maret', 
-        'April': 'April', 
-        'May': 'Mei', 
-        'June': 'Juni', 
-        'July': 'Juli', 
-        'August': 'Agustus', 
-        'September': 'September', 
-        'October': 'Oktober', 
-        'November': 'November', 
-        'December': 'Desember'
-    }
-    filtered_day_df['month_name_id'] = filtered_day_df['month_name'].map(month_map)
+    # Advanced analysis: Impact of temperature and humidity - persis seperti di notebook
+    st.subheader("Hubungan Penyewaan Sepeda dengan Suhu dan Kelembaban")
+    col1, col2 = st.columns(2)
     
-    monthly_rentals = filtered_day_df.groupby('month_name_id')['cnt'].mean().reset_index()
+    with col1:
+        fig = px.scatter(
+            filtered_day_df, 
+            x='temp', 
+            y='cnt',
+            color='season_name',
+            labels={'cnt': 'Jumlah Penyewaan', 'temp': 'Suhu (Ternormalisasi)', 'season_name': 'Musim'},
+            title='Hubungan Penyewaan Sepeda dengan Suhu (berdasarkan Musim)',
+            trendline='ols'
+        )
+        st.plotly_chart(fig, use_container_width=True)
     
-    # Pastikan bulan dalam urutan yang benar
-    months_order = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 
-                   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
-    monthly_rentals['month_name_id'] = pd.Categorical(monthly_rentals['month_name_id'], categories=months_order)
-    monthly_rentals = monthly_rentals.sort_values('month_name_id')
-    
-    fig = px.line(
-        monthly_rentals, 
-        x='month_name_id', 
-        y='cnt',
-        markers=True,
-        labels={'cnt': 'Rata-rata Penyewaan', 'month_name_id': 'Bulan'},
-        title='Rata-rata Penyewaan Sepeda Berdasarkan Bulan'
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        fig = px.scatter(
+            filtered_day_df, 
+            x='hum', 
+            y='cnt',
+            color='season_name',
+            labels={'cnt': 'Jumlah Penyewaan', 'hum': 'Kelembaban (Ternormalisasi)', 'season_name': 'Musim'},
+            title='Hubungan Penyewaan Sepeda dengan Kelembaban (berdasarkan Musim)',
+            trendline='ols'
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.header("Pola Harian dan Per Jam")
+    # st.header("2. Bagaimana pola penggunaan sepeda sepanjang hari dan minggu?")
     
-    # Penyewaan berdasarkan jam
+    # Hourly usage patterns - persis seperti di notebook
     hourly_rentals = filtered_combined_df.groupby('hr')['cnt'].mean().reset_index()
     
     fig = px.line(
@@ -206,144 +202,249 @@ with tab2:
         x='hr', 
         y='cnt',
         markers=True,
-        labels={'cnt': 'Rata-rata Penyewaan', 'hr': 'Jam'},
-        title='Rata-rata Penyewaan Sepeda Berdasarkan Jam'
+        labels={'cnt': 'Rata-rata Jumlah Penyewaan', 'hr': 'Jam'},
+        title='Rata-rata Penyewaan Sepeda berdasarkan Jam'
     )
+    fig.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1))
     st.plotly_chart(fig, use_container_width=True)
     
-    # Penyewaan berdasarkan hari dalam seminggu
-    weekday_rentals = filtered_day_df.groupby('weekday_name')['cnt'].mean().reset_index()
+    # Hourly patterns by day type (weekday vs weekend) - persis seperti di notebook
+    hourly_by_daytype = filtered_combined_df.groupby(['hr', 'is_weekend'])['cnt'].mean().reset_index()
     
-    # Pastikan hari dalam urutan yang benar
-    days_order = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
-    weekday_rentals['weekday_name'] = pd.Categorical(weekday_rentals['weekday_name'], categories=days_order)
-    weekday_rentals = weekday_rentals.sort_values('weekday_name')
-    
-    fig = px.bar(
-        weekday_rentals, 
-        x='weekday_name', 
-        y='cnt',
-        color='weekday_name',
-        labels={'cnt': 'Rata-rata Penyewaan', 'weekday_name': 'Hari'},
-        title='Rata-rata Penyewaan Sepeda Berdasarkan Hari'
+    fig = px.line(
+        hourly_by_daytype, 
+        x='hr', 
+        y='cnt', 
+        color='is_weekend',
+        markers=True,
+        labels={'cnt': 'Rata-rata Jumlah Penyewaan', 'hr': 'Jam', 'is_weekend': 'Tipe Hari'},
+        title='Rata-rata Penyewaan Sepeda berdasarkan Jam dan Tipe Hari'
     )
+    fig.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1))
     st.plotly_chart(fig, use_container_width=True)
     
-    # Heatmap jam vs hari
-    hourly_weekday = filtered_combined_df.groupby(['weekday_name', 'hr'])['cnt'].mean().reset_index()
-    hourly_weekday_pivot = hourly_weekday.pivot(index='hr', columns='weekday_name', values='cnt')
+    # Detailed analysis by hour and user type - persis seperti di notebook
+    hour_df_agg = filtered_combined_df.groupby('hr')[['casual', 'registered', 'cnt']].mean().reset_index()
     
-    # Pastikan hari dalam urutan yang benar
-    hourly_weekday_pivot = hourly_weekday_pivot[days_order]
-    
-    fig = px.imshow(
-        hourly_weekday_pivot,
-        labels=dict(x="Hari", y="Jam", color="Rata-rata Penyewaan"),
-        x=hourly_weekday_pivot.columns,
-        y=hourly_weekday_pivot.index,
-        aspect="auto",
-        title="Rata-rata Penyewaan Sepeda Berdasarkan Jam dan Hari"
+    # Melting data untuk format yang sesuai dengan plotly
+    hour_df_agg_melted = pd.melt(
+        hour_df_agg,
+        id_vars=['hr'],
+        value_vars=['casual', 'registered', 'cnt'],
+        var_name='user_type',
+        value_name='avg_rentals'
     )
+    
+    # Memetakan jenis pengguna
+    user_type_map = {
+        'casual': 'Pengguna Biasa', 
+        'registered': 'Pengguna Terdaftar', 
+        'cnt': 'Total Penyewaan'
+    }
+    hour_df_agg_melted['user_type'] = hour_df_agg_melted['user_type'].map(user_type_map)
+    
+    fig = px.line(
+        hour_df_agg_melted,
+        x='hr',
+        y='avg_rentals',
+        color='user_type',
+        markers=True,
+        labels={
+            'hr': 'Jam',
+            'avg_rentals': 'Rata-rata Jumlah Penyewaan',
+            'user_type': 'Tipe Pengguna'
+        },
+        title='Penyewaan Sepeda per Jam berdasarkan Tipe Pengguna'
+    )
+    fig.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1))
     st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
-    st.header("Analisis Dampak Cuaca")
+    # st.header("Analisis Lanjutan")
     
-    # Penyewaan berdasarkan kondisi cuaca
-    weather_rentals = filtered_day_df.groupby('weathersit_name')['cnt'].mean().reset_index()
+    st.subheader("1. Time-based Usage Clustering")
     
+    # Create features for time-based clustering
+    hour_features = filtered_combined_df.groupby('hr')['cnt'].mean().reset_index()
+    hour_features.columns = ['hour', 'avg_rentals']
+    
+    # Manual clustering using pd.cut (binning) based on the hourly pattern
+    hour_features['usage_cluster'] = pd.cut(
+        hour_features['avg_rentals'],
+        bins=[0, 50, 150, 250, 500],
+        labels=['Low', 'Medium', 'High', 'Very High']
+    )
+    
+    # Map English to Indonesian for display
+    cluster_map = {
+        'Low': 'Rendah',
+        'Medium': 'Sedang',
+        'High': 'Tinggi',
+        'Very High': 'Sangat Tinggi'
+    }
+    hour_features['cluster_name'] = hour_features['usage_cluster'].map(cluster_map)
+    
+    # Visualize the time-based clusters
     fig = px.bar(
-        weather_rentals, 
-        x='weathersit_name', 
-        y='cnt',
-        color='weathersit_name',
-        labels={'cnt': 'Rata-rata Penyewaan', 'weathersit_name': 'Kondisi Cuaca'},
-        title='Rata-rata Penyewaan Sepeda Berdasarkan Kondisi Cuaca'
+        hour_features,
+        x='hour',
+        y='avg_rentals',
+        color='cluster_name',
+        labels={
+            'hour': 'Jam',
+            'avg_rentals': 'Rata-rata Jumlah Penyewaan',
+            'cluster_name': 'Tingkat Penggunaan'
+        },
+        title='Penyewaan Sepeda per Jam dengan Pengelompokan berdasarkan Volume Penggunaan',
+        color_discrete_map={
+            'Rendah': 'lightblue',
+            'Sedang': 'skyblue',
+            'Tinggi': 'royalblue',
+            'Sangat Tinggi': 'darkblue'
+        }
     )
+    fig.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1))
     st.plotly_chart(fig, use_container_width=True)
     
-    # Dampak suhu
-    fig = px.scatter(
-        filtered_day_df, 
-        x='temp', 
-        y='cnt',
-        color='season_name',
-        labels={'cnt': 'Total Penyewaan', 'temp': 'Suhu (Ternormalisasi)', 'season_name': 'Musim'},
-        title='Penyewaan Sepeda vs. Suhu',
-        trendline='ols'
+    # Create a summary of the time-based clusters
+    time_cluster_summary = hour_features.groupby('cluster_name')['hour'].apply(list).reset_index()
+    time_cluster_summary['count'] = time_cluster_summary['hour'].apply(len)
+    time_cluster_summary['hours'] = time_cluster_summary['hour'].apply(lambda x: ', '.join([f"{h}:00" for h in sorted(x)]))
+    
+    # Urutkan berdasarkan tingkat penggunaan
+    cluster_order = {
+        'Rendah': 0,
+        'Sedang': 1,
+        'Tinggi': 2,
+        'Sangat Tinggi': 3
+    }
+    time_cluster_summary['order'] = time_cluster_summary['cluster_name'].map(cluster_order)
+    time_cluster_summary = time_cluster_summary.sort_values('order')
+    
+    # Tampilkan tabel ringkasan
+    st.write("Ringkasan Klaster berdasarkan Waktu:")
+    st.dataframe(time_cluster_summary[['cluster_name', 'count', 'hours']])
+    
+    st.subheader("2. Weather-Temperature Impact Clustering")
+    
+    # Create a dataset for weather analysis
+    weather_temp_df = filtered_day_df[['temp', 'hum', 'windspeed', 'weathersit_name', 'cnt']].copy()
+    
+    # Bin temperature into categories
+    weather_temp_df['temp_category'] = pd.cut(
+        weather_temp_df['temp'],
+        bins=[0, 0.25, 0.5, 0.75, 1.0],
+        labels=['Dingin', 'Sejuk', 'Hangat', 'Panas']
     )
+    
+    # Bin humidity into categories
+    weather_temp_df['humidity_category'] = pd.cut(
+        weather_temp_df['hum'],
+        bins=[0, 0.5, 0.7, 1.0],
+        labels=['Rendah', 'Sedang', 'Tinggi']
+    )
+    
+    # Create weather-temp groups (manual clustering based on domain knowledge)
+    weather_temp_df['weather_temp_group'] = weather_temp_df.apply(
+        lambda row: f"{row['weathersit_name']} - {row['temp_category']}",
+        axis=1
+    )
+    
+    # Analyze the impact of these weather-temp groups on rentals
+    weather_temp_impact = weather_temp_df.groupby('weather_temp_group')['cnt'].agg(['mean', 'count']).reset_index()
+    weather_temp_impact = weather_temp_impact.sort_values('mean', ascending=False)
+    
+    # Filter groups with sufficient data points (at least 10)
+    weather_temp_impact = weather_temp_impact[weather_temp_impact['count'] >= 10]
+    
+    # Visualize weather-temp groups
+    fig = px.bar(
+        weather_temp_impact,
+        x='weather_temp_group',
+        y='mean',
+        color='weather_temp_group',
+        labels={
+            'weather_temp_group': 'Kelompok Cuaca-Suhu',
+            'mean': 'Rata-rata Jumlah Penyewaan'
+        },
+        title='Rata-rata Penyewaan Sepeda berdasarkan Kelompok Cuaca-Suhu'
+    )
+    fig.update_layout(xaxis={'categoryorder':'total descending'})
     st.plotly_chart(fig, use_container_width=True)
     
-    # Dampak kelembaban
-    fig = px.scatter(
-        filtered_day_df, 
-        x='hum', 
-        y='cnt',
-        color='season_name',
-        labels={'cnt': 'Total Penyewaan', 'hum': 'Kelembaban (Ternormalisasi)', 'season_name': 'Musim'},
-        title='Penyewaan Sepeda vs. Kelembaban',
-        trendline='ols'
+    st.subheader("3. Seasonal User Type Clustering")
+    
+    # Create a seasonal user type dataset
+    seasonal_user_df = filtered_day_df[['season_name', 'casual', 'registered', 'cnt']].copy()
+    
+    # Calculate the proportion of casual vs registered users
+    seasonal_user_df['casual_ratio'] = seasonal_user_df['casual'] / seasonal_user_df['cnt']
+    seasonal_user_df['registered_ratio'] = seasonal_user_df['registered'] / seasonal_user_df['cnt']
+    
+    # Bin days based on proportion of registered users (manual clustering)
+    seasonal_user_df['user_composition'] = pd.cut(
+        seasonal_user_df['registered_ratio'],
+        bins=[0, 0.6, 0.75, 0.9, 1.0],
+        labels=['Mayoritas Pengguna Biasa', 'Campuran', 'Mayoritas Pengguna Terdaftar', 'Hampir Semua Pengguna Terdaftar']
+    )
+    
+    # Analyze user composition by season
+    user_comp_by_season = pd.crosstab(
+        seasonal_user_df['season_name'],
+        seasonal_user_df['user_composition'],
+        normalize='index'
+    ) * 100
+    
+    # Melting untuk format yang sesuai dengan plotly
+    user_comp_melted = user_comp_by_season.reset_index().melt(
+        id_vars=['season_name'],
+        var_name='user_composition',
+        value_name='percentage'
+    )
+    
+    # Visualize the seasonal user composition
+    fig = px.bar(
+        user_comp_melted,
+        x='season_name',
+        y='percentage',
+        color='user_composition',
+        barmode='stack',
+        labels={
+            'season_name': 'Musim',
+            'percentage': 'Persentase Hari',
+            'user_composition': 'Komposisi Pengguna'
+        },
+        title='Komposisi Pengguna berdasarkan Musim'
     )
     st.plotly_chart(fig, use_container_width=True)
-
-# Analisis Lanjutan - Bagian klasterisasi
-st.header("Analisis Lanjutan: Pengelompokan Pola Penggunaan")
-
-# Membuat fitur untuk klasterisasi
-hour_features = filtered_combined_df.groupby('hr')['cnt'].mean().reset_index()
-hour_features.columns = ['hour', 'avg_rentals']
-
-# Klasterisasi manual berdasarkan pola per jam
-# Mendefinisikan 4 klaster berdasarkan volume penyewaan
-hour_features['cluster'] = pd.cut(
-    hour_features['avg_rentals'],
-    bins=4,
-    labels=['Rendah', 'Sedang', 'Tinggi', 'Sangat Tinggi']
-)
-
-# Visualisasi klaster
-fig = px.scatter(
-    hour_features,
-    x='hour',
-    y='avg_rentals',
-    color='cluster',
-    labels={'hour': 'Jam', 'avg_rentals': 'Rata-rata Penyewaan', 'cluster': 'Tingkat Penggunaan'},
-    title='Jam Dikelompokkan Berdasarkan Tingkat Penggunaan'
-)
-st.plotly_chart(fig, use_container_width=True)
-
-# Menambahkan penjelasan untuk klaster
-st.subheader("Analisis Klaster Per Jam")
-st.write("""
-Berdasarkan rata-rata penyewaan sepeda per jam, kita dapat mengidentifikasi pola penggunaan yang berbeda sepanjang hari:
-- **Penggunaan Sangat Tinggi**: Jam-jam puncak ketika sistem berbagi sepeda mengalami permintaan maksimum
-- **Penggunaan Tinggi**: Jam dengan permintaan yang signifikan tetapi tidak puncak
-- **Penggunaan Sedang**: Periode permintaan moderat
-- **Penggunaan Rendah**: Waktu ketika sedikit sepeda disewa, biasanya cocok untuk pemeliharaan dan redistribusi
-""")
 
 # Kesimpulan
 st.header("Kesimpulan")
 st.write("""
-Berdasarkan analisis kami, dapat ditarik kesimpulan berikut tentang pola berbagi sepeda:
+Berdasarkan analisis data penyewaan sepeda, berikut adalah kesimpulan utama:
 
-1. **Dampak Musiman**: 
-   - Penyewaan sepeda tertinggi terjadi pada Musim Panas dan Musim Gugur, dengan penggunaan yang jauh lebih rendah di Musim Dingin.
-   - Suhu memiliki korelasi positif yang kuat dengan penyewaan sepeda.
+1. **Kondisi Musim dan Cuaca**:
+   - Penyewaan sepeda tertinggi terjadi pada Musim Panas dan Musim Gugur, dengan penggunaan yang lebih rendah di Musim Dingin.
+   - Kondisi cuaca cerah menghasilkan jumlah penyewaan tertinggi, sementara penyewaan menurun drastis saat cuaca hujan.
+   - Suhu memiliki korelasi positif yang kuat dengan penyewaan sepeda, menunjukkan bahwa orang lebih cenderung menyewa sepeda saat cuaca hangat.
+   - Kelembaban tinggi berdampak negatif pada penyewaan sepeda.
 
-2. **Pola Harian**:
-   - Penggunaan hari kerja menunjukkan pola perjalanan yang jelas dengan puncak selama jam sibuk pagi dan sore.
-   - Penggunaan akhir pekan lebih merata sepanjang hari dengan satu puncak di tengah hari.
+2. **Pola Penggunaan Sepanjang Hari dan Minggu**:
+   - Terdapat dua puncak penggunaan sepeda yang jelas pada hari kerja: pukul 8 pagi dan pukul 17-18 sore, yang sesuai dengan waktu perjalanan komuter.
+   - Pada akhir pekan, penyewaan sepeda cenderung meningkat secara bertahap sepanjang pagi hingga mencapai puncak di siang hari, menunjukkan pola rekreasi.
+   - Pengguna terdaftar merupakan mayoritas penggunaan pada hari kerja, sementara proporsi pengguna kasual meningkat pada akhir pekan.
+   - Jam 0-6 pagi secara konsisten menunjukkan tingkat penggunaan rendah di seluruh minggu.
 
-3. **Dampak Cuaca**:
-   - Kondisi cuaca cerah menyebabkan penyewaan sepeda yang jauh lebih tinggi.
-   - Kelembaban tinggi dan curah hujan berdampak negatif pada penggunaan sepeda.
+3. **Segmentasi Pengguna**:
+   - Pengguna terdaftar mencerminkan pola perjalanan komuter dengan puncak penggunaan yang jelas pada jam sibuk.
+   - Pengguna kasual lebih dipengaruhi oleh kondisi cuaca dan akhir pekan, menunjukkan penggunaan yang lebih rekreasional.
+   - Komposisi pengguna bervariasi berdasarkan musim, dengan peningkatan proporsi pengguna kasual selama Musim Panas.
 
-4. **Rekomendasi**:
-   - Optimalkan ketersediaan sepeda selama jam penggunaan puncak dengan memastikan sepeda yang cukup di stasiun populer.
-   - Terapkan jadwal pemeliharaan selama jam penggunaan rendah untuk meminimalkan gangguan.
-   - Pertimbangkan kampanye promosi selama musim dengan penggunaan lebih rendah untuk mendorong penyewaan.
-   - Kembangkan strategi harga responsif cuaca untuk menyeimbangkan permintaan selama kondisi cuaca buruk.
+4. **Rekomendasi Bisnis**:
+   - Optimalkan ketersediaan sepeda selama jam puncak (8 pagi dan 17-18 sore) pada hari kerja untuk mengakomodasi pengguna terdaftar.
+   - Tingkatkan promosi untuk pengguna kasual selama akhir pekan dan Musim Panas ketika penggunaan rekreasional meningkat.
+   - Jadwalkan pemeliharaan sepeda pada jam penggunaan rendah (tengah malam hingga pagi hari) untuk meminimalkan gangguan layanan.
+   - Pertimbangkan strategi harga dinamis yang menawarkan diskon selama kondisi cuaca kurang ideal atau pada jam-jam sepi untuk mengoptimalkan penggunaan.
 """)
 
 # Menambahkan footer dengan informasi pembuat
